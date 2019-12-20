@@ -20,14 +20,54 @@ class Field():
     arr = args[0]
     if not isinstance(arr, np.ndarray) or arr.shape[1] != 2:
       raise Exception('Please provide a numpy array with shape n,2')
+    # ensure no two points have the exact same coords
+    self.points = arr
+    self.jitter_points()
+    # find the bounding box of the input data
+    self.domains = self.get_domains(arr)
+    self.bb_points = self.get_bb_points(arr)
+    self.constrain = kwargs.get('constrain', True)
+    self.build_voronoi()
 
+
+  def jitter_points(self, scalar=.00000001):
+    '''
+    Ensure no two points have the same coords or else the number
+    of regions will be less than the number of input points
+    '''
+    if not self.points_contain_duplicates(): return
+    self.points += np.random.rand( len(self.points), 2 ) * scalar
+    if self.points_contain_duplicates(): self.jitter_points()
+
+
+  def get_domains(self, arr):
+    '''
+    Return an object with the x, y domains of `arr`
+    '''
     x = arr[:, 0]
     y = arr[:, 1]
-    self.bb = [min(x), max(x), min(y), max(y)]
-    self.constrain = kwargs.get('constrain', True)
-    self.points = arr
-    self.iterations = 0
-    self.build_voronoi()
+    return {
+      'x': {
+        'min': min(x),
+        'max': max(x),
+      },
+      'y': {
+        'min': min(y),
+        'max': max(y),
+      }
+    }
+
+
+  def get_bb_points(self, arr):
+    '''
+    Given an array of 2D points, return the four vertex bounding box
+    '''
+    return np.array([
+      [self.domains['x']['min'], self.domains['y']['min']],
+      [self.domains['x']['max'], self.domains['y']['min']],
+      [self.domains['x']['min'], self.domains['y']['max']],
+      [self.domains['x']['max'], self.domains['y']['max']],
+    ])
 
 
   def build_voronoi(self):
@@ -36,47 +76,29 @@ class Field():
     self.voronoi attributes, see: https://docs.scipy.org/doc/scipy/
       reference/generated/scipy.spatial.Voronoi.html
     '''
-
-    # remove old pseudo-points and add new pseudo-points to control spread
-    if self.constrain:
-      if self.iterations:
-        self.points = self.points[:-4]
-      self.points = np.vstack((self.points, np.array([
-        [ self.bb[0], self.bb[2] ],
-        [ self.bb[0], self.bb[3] ],
-        [ self.bb[1], self.bb[2] ],
-        [ self.bb[1], self.bb[3] ],
-      ])))
-
-    # ensure no two points have the exact same coords
-    self.jitter_points()
-
     # build the voronoi tessellation map
     self.voronoi = Voronoi(self.points, qhull_options='Qbb Qc Qx')
 
-    # make bounding box (bb) min, max of voronoi vertex positions
+    # constrain voronoi vertices within bounding box
     if self.constrain:
       for idx, vertex in enumerate(self.voronoi.vertices):
         x, y = vertex
-        if x < self.bb[0]: self.voronoi.vertices[idx][0] = self.bb[0]
-        if x > self.bb[1]: self.voronoi.vertices[idx][0] = self.bb[1]
-        if y < self.bb[2]: self.voronoi.vertices[idx][1] = self.bb[2]
-        if y > self.bb[3]: self.voronoi.vertices[idx][1] = self.bb[3]
+        if x < self.domains['x']['min']:
+          self.voronoi.vertices[idx][0] = self.domains['x']['min']
+        if x > self.domains['x']['max']:
+          self.voronoi.vertices[idx][0] = self.domains['x']['max']
+        if x < self.domains['y']['min']:
+          self.voronoi.vertices[idx][1] = self.domains['y']['min']
+        if x > self.domains['y']['max']:
+          self.voronoi.vertices[idx][1] = self.domains['y']['max']
 
-    # store the number of voronoi models this instance has built
-    # so we can remove pseudo-points in the end
-    self.iterations += 1
 
-
-  def jitter_points(self, scalar=.0000001):
+  def points_contain_duplicates(self):
     '''
-    Ensure no two points have the same coords or else the number
-    of regions will be less than the number of input points
+    Return a boolean indicating whether self.points contains duplicates
     '''
-    s = set()
-    while len(s) != len(self.points):
-      s = {tuple(i) for i in self.points.tolist()}
-      self.points = self.points + np.random.rand( len(self.points), 2 ) * scalar
+    vals, count = np.unique(self.points, return_counts=True)
+    return np.any(vals[count > 1])
 
 
   def find_centroid(self, vertices):
@@ -104,13 +126,16 @@ class Field():
     if area == 0: area += 0.0000001
     centroid_x = (1.0/(6.0*area)) * centroid_x
     centroid_y = (1.0/(6.0*area)) * centroid_y
-
     # prevent centroids from escaping bounding box
     if self.constrain:
-      if centroid_x <= self.bb[0]: centroid_x = self.bb[0]
-      if centroid_x >= self.bb[1]: centroid_x = self.bb[1]
-      if centroid_y <= self.bb[2]: centroid_y = self.bb[2]
-      if centroid_y >= self.bb[3]: centroid_y = self.bb[3]
+      if centroid_x < self.domains['x']['min']:
+         centroid_x = self.domains['x']['min']
+      if centroid_x > self.domains['x']['max']:
+         centroid_x = self.domains['x']['max']
+      if centroid_y < self.domains['y']['min']:
+         centroid_y = self.domains['y']['min']
+      if centroid_y > self.domains['y']['max']:
+         centroid_y = self.domains['y']['max']
     return np.array([centroid_x, centroid_y])
 
 
@@ -121,22 +146,18 @@ class Field():
     to spread them out within the space).
     '''
     centroids = []
-    for region in self.voronoi.regions:
-      # skip blank regions
-      if not region: continue
-      # add first region index to region to create enclosed polygon
+    for idx in self.voronoi.point_region:
+      # the region is a series of indices into self.voronoi.vertices
+      # remove point at infinity, designated by index -1
+      region = [i for i in self.voronoi.regions[idx] if i != -1]
+      # enclose the polygon
       region = region + [region[0]]
-      # get the vertices for that region
-      vertices = self.voronoi.vertices[region]
+      # get the vertices for this region
+      verts = self.voronoi.vertices[region]
       # find the centroid of those vertices
-      centroid = self.find_centroid(vertices)
-      centroids.append(centroid)
-    # reorder the centroids into the same order as the input points
-    ordered = [None] * len(self.points)
-    for idx, i in enumerate(centroids):
-      pos = np.where(self.voronoi.point_region == idx)[0][0]
-      ordered[pos] = np.array(i)
-    self.points = np.vstack([i for i in ordered])
+      centroids.append(self.find_centroid(verts))
+    self.points = np.array(centroids)
+    self.jitter_points()
     self.build_voronoi()
 
 
@@ -146,6 +167,4 @@ class Field():
     @returns np.array a numpy array that contains the same number
       of observations in the input points, in identical order
     '''
-    if self.iterations > 0 and self.constrain:
-      return self.points[:-4]
     return self.points
