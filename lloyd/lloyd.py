@@ -40,7 +40,6 @@ class Field():
       negative = np.random.rand( len(self.points), 2 ) * scalar
       self.points = self.points + positive - negative
       self.constrain_points()
-      print(' * jittering inputs')
 
 
   def constrain_points(self):
