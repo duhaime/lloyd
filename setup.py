@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup (
   name='lloyd',
-  version='0.0.9',
+  version='0.0.10',
   packages=['lloyd'],
   keywords = ['data-visualization', 'geometry', 'voronoi', 'lloyd-iteration'],
   description='Lloyd iteration for distributing points in two-dimensional space.',
