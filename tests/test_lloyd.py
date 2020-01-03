@@ -21,7 +21,7 @@ def constrained(arr):
 
 @pytest.fixture()
 def unconstrained(arr):
-  field = Field(arr, constrained=False)
+  field = Field(arr, constrain=False)
   field.relax()
   return field
 
@@ -34,15 +34,16 @@ def test_result_points_same_shape(arr, constrained, unconstrained):
     assert field.get_points().shape == arr.shape
 
 
-def test_points_in_bb(constrained):
+def test_points_in_bb(arr, constrained):
   '''
   Ensure all input points are in the bounding box
   '''
+  domains = constrained.get_domains(arr)
   for x, y in constrained.get_points():
-    assert x >= constrained.bb[0]
-    assert x <= constrained.bb[1]
-    assert y >= constrained.bb[2]
-    assert y <= constrained.bb[3]
+    assert x >= domains['x']['min']
+    assert x <= domains['x']['max']
+    assert y >= domains['y']['min']
+    assert y <= domains['y']['max']
 
 def test_no_empty_regions(constrained, unconstrained):
   '''

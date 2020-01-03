@@ -20,24 +20,38 @@ class Field():
     arr = args[0]
     if not isinstance(arr, np.ndarray) or arr.shape[1] != 2:
       raise Exception('Please provide a numpy array with shape n,2')
-    # ensure no two points have the exact same coords
     self.points = arr
-    self.jitter_points()
     # find the bounding box of the input data
     self.domains = self.get_domains(arr)
+    # ensure no two points have the exact same coords
+    self.jitter_points()
     self.bb_points = self.get_bb_points(arr)
     self.constrain = kwargs.get('constrain', True)
     self.build_voronoi()
 
 
-  def jitter_points(self, scalar=.00000001):
+  def jitter_points(self, scalar=.000000001):
     '''
     Ensure no two points have the same coords or else the number
     of regions will be less than the number of input points
     '''
-    if not self.points_contain_duplicates(): return
-    self.points += np.random.rand( len(self.points), 2 ) * scalar
-    if self.points_contain_duplicates(): self.jitter_points()
+    while self.points_contain_duplicates():
+      positive = np.random.rand( len(self.points), 2 ) * scalar
+      negative = np.random.rand( len(self.points), 2 ) * scalar
+      self.points = self.points + positive - negative
+      self.constrain_points()
+      print(' * jittering inputs')
+
+
+  def constrain_points(self):
+    '''
+    Update any points that have drifted beyond the boundaries of this space
+    '''
+    for point in self.points:
+      if point[0] < self.domains['x']['min']: point[0] = self.domains['x']['min']
+      if point[0] > self.domains['x']['max']: point[0] = self.domains['x']['max']
+      if point[1] < self.domains['y']['min']: point[1] = self.domains['y']['min']
+      if point[1] > self.domains['y']['max']: point[1] = self.domains['y']['max']
 
 
   def get_domains(self, arr):
@@ -87,9 +101,9 @@ class Field():
           self.voronoi.vertices[idx][0] = self.domains['x']['min']
         if x > self.domains['x']['max']:
           self.voronoi.vertices[idx][0] = self.domains['x']['max']
-        if x < self.domains['y']['min']:
+        if y < self.domains['y']['min']:
           self.voronoi.vertices[idx][1] = self.domains['y']['min']
-        if x > self.domains['y']['max']:
+        if y > self.domains['y']['max']:
           self.voronoi.vertices[idx][1] = self.domains['y']['max']
 
 
@@ -128,14 +142,10 @@ class Field():
     centroid_y = (1.0/(6.0*area)) * centroid_y
     # prevent centroids from escaping bounding box
     if self.constrain:
-      if centroid_x < self.domains['x']['min']:
-         centroid_x = self.domains['x']['min']
-      if centroid_x > self.domains['x']['max']:
-         centroid_x = self.domains['x']['max']
-      if centroid_y < self.domains['y']['min']:
-         centroid_y = self.domains['y']['min']
-      if centroid_y > self.domains['y']['max']:
-         centroid_y = self.domains['y']['max']
+      if centroid_x < self.domains['x']['min']: centroid_x = self.domains['x']['min']
+      if centroid_x > self.domains['x']['max']: centroid_x = self.domains['x']['max']
+      if centroid_y < self.domains['y']['min']: centroid_y = self.domains['y']['min']
+      if centroid_y > self.domains['y']['max']: centroid_y = self.domains['y']['max']
     return np.array([centroid_x, centroid_y])
 
 
@@ -157,6 +167,7 @@ class Field():
       # find the centroid of those vertices
       centroids.append(self.find_centroid(verts))
     self.points = np.array(centroids)
+    self.constrain_points()
     self.jitter_points()
     self.build_voronoi()
 
